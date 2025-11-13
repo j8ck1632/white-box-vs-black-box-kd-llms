@@ -207,12 +207,11 @@ If you use this code in your research, please cite:
 ```
 @misc{whitebox_blackbox_kd_llms,
   title={White-Box vs Black-Box Knowledge Distillation in Causal Language Models},
-  author={Your Name},
-  year={2024}
+  author={Jack Large, Madelyn Sarbin},
+  year={2025}
 }
 ```
 
 ## License
 
-[Specify your license here]
-
+Apache 2.0
