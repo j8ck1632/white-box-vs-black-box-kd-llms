@@ -1,9 +1,11 @@
 """
 Configuration parameters for the knowledge distillation experiment.
+
+Copy this file to config.py and fill in your Hugging Face token.
 """
 
 # Model names
-TEACHER_MODEL_NAME = "meta-llama/Meta-Llama-3-8B"
+TEACHER_MODEL_NAME = "mistralai/Mistral-7B-v0.1"
 STUDENT_MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 # Dataset names
@@ -39,4 +41,12 @@ OUTPUT_PATH = "./results"
 # Ray configuration
 RAY_NUM_GPUS_PER_TRIAL = 1
 RAY_NUM_CPUS_PER_TRIAL = 4
+# Maximum concurrent trials (None = auto-detect based on available GPUs)
+# Set to a specific number to limit concurrency (e.g., 2 for a 2-GPU cluster)
+RAY_MAX_CONCURRENT_TRIALS = None
+
+# Hugging Face token (required for gated models)
+# Get your token from: https://huggingface.co/settings/tokens
+# Replace 'YOUR_TOKEN_HERE' with your actual Hugging Face token
+HUGGING_FACE_TOKEN = "YOUR_TOKEN_HERE"
 

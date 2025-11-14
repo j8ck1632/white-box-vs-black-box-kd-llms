@@ -50,16 +50,31 @@ ray start --address=<head-node-ip>:10001
 
 Or if using a Ray cluster manager (e.g., Ray on Kubernetes), configure according to your setup.
 
-### 3. Model Access
+### 3. Configuration Setup
 
-Ensure you have access to the HuggingFace models:
-- `meta-llama/Meta-Llama-3-8B` (teacher)
-- `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (student)
+Copy the example configuration file and add your Hugging Face token:
 
-You may need to authenticate with HuggingFace:
 ```bash
-huggingface-cli login
+cp config.py.example config.py
 ```
+
+Then edit `config.py` and replace `YOUR_TOKEN_HERE` with your actual Hugging Face token:
+
+```python
+HUGGING_FACE_TOKEN = "your_actual_token_here"
+```
+
+Get your token from: https://huggingface.co/settings/tokens
+
+**Note**: `config.py` is ignored by git (it's in `.gitignore`) to protect your token. Only `config.py.example` is tracked in the repository.
+
+### 4. Model Access
+
+The required HuggingFace models:
+- `mistralai/Mistral-7B-v0.1` (teacher) - **Requires authentication** (gated model)
+- `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (student) - Public, no authentication required
+
+Make sure you have access to the teacher model and your token is set in `config.py`.
 
 ## Usage
 
