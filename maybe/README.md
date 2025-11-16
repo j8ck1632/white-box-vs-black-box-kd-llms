@@ -12,6 +12,37 @@ This experiment systematically compares different knowledge distillation signals
 
 The experiment runs 28 trials (4 groups × 7 seeds) on a Ray cluster with 28 GPUs.
 
+### Ray-Free Multi-Machine Flow
+
+If you would rather split work across a few standalone GPUs without Ray, use:
+
+- `generate_teacher_manifest.py` to export a single JSON containing the teacher snapshot metadata.
+- `multi_machine_runner.py` to run any distillation type sequentially on one box (e.g., Machine A handles `black_box`, Machine B runs `hidden_state`).
+- `tests_dashboard.py` for a simple Tkinter GUI explaining each test and the exact CLI to launch it.
+- `MULTI_MACHINE_PLAN.md` for the recommended three-machine schedule.
+
+Need to hand teammates a single folder? Copy `shareable_bundle/` along with
+`offline_teacher_data/` and ask them to drive everything via:
+
+```
+python shareable_bundle/experiment_hub.py <manifest|run|dashboard|plan> [...]
+```
+
+See `shareable_bundle/README_SHARABLE.md` for the full workflow.
+
+### One-Command Shareable Zip
+
+Run the packaging helper to build a ready-to-ship archive that already contains
+the bundle, config templates, and docs:
+
+```bash
+python create_shareable_package.py --output shareable_experiment.zip
+```
+
+Distribute the resulting zip plus the `offline_teacher_data/` directory (kept
+separate to avoid multi-GB archives). The archive already includes the latest
+`teacher_manifest.json`, so collaborators simply unzip and go.
+
 ## Project Structure
 
 ```
@@ -80,7 +111,7 @@ Make sure you have access to the teacher model and your token is set in `config.
 
 ### Step 1: Pre-compute Teacher Data (Offline)
 
-Run the offline teacher data generation script. This runs the teacher model once on all datasets and saves the outputs:
+Run the offline teacher data generation script. This streams the datasets through the teacher model on your local machine (no Ray required) and saves compressed outputs:
 
 ```bash
 python offline_teacher_data.py
@@ -88,15 +119,47 @@ python offline_teacher_data.py
 
 This will:
 - Load datasets (SST-2, MMLU, GSM8K)
-- Run the teacher model on all prompts using Ray Data
-- Save enriched dataset with teacher outputs to `./offline_teacher_data/` in Parquet format
+- Run the teacher model on all prompts sequentially (streaming batches to keep RAM low)
+- Save an enriched Parquet dataset to `D:\offline_teacher_data\offline_teacher_data.parquet` (or `./offline_teacher_data/` if `D:` is unavailable)
 
-**Expected output**: A Parquet directory containing:
+**Expected output**: A Parquet file containing:
 - `prompt`: Original prompts
 - `answer`: Original answers
-- `teacher_logits`: Teacher model logits
-- `teacher_hidden_state`: Teacher final layer hidden states
-- `teacher_attention_map`: Teacher final layer attention maps
+- `teacher_topk_indices` / `teacher_topk_values`: Top‑k teacher logits per token (saves ~90% disk space vs. dense logits)
+- `teacher_hidden_state`: Downsampled teacher hidden states
+- `teacher_attention_map`: Downsampled teacher attention maps
+- `student_input_ids`, `student_attention_mask`: Student tokenization metadata for alignment
+
+You can adjust compression knobs (`TOP_K_LOGITS`, `HIDDEN_STRIDE`, `ATTENTION_STRIDE`, Parquet compression) in `config.py`.
+
+#### Step 1b: Validate the Offline Dataset
+
+Run the built-in verification utility to ensure saved tensors round-trip cleanly:
+
+```bash
+python -c "import config; import offline_teacher_data as otd; otd.verify_saved_data(config.OFFLINE_DATA_PATH, num_samples=20)"
+```
+
+Successful runs end with:
+
+```
+✓ Verified <n> random examples - all valid
+✓ Data verification passed!
+```
+
+If validation fails:
+
+- Pull latest changes (the `_to_py` helper now recursively normalizes nested numpy object arrays before Parquet writes).
+- Inspect the offending row via a notebook/REPL and confirm `teacher_attention_map` remains `[num_heads, seq_len, seq_len]`.
+- Regenerate offline data only if the stored tensors are truly malformed.
+
+Optional but recommended regression check:
+
+```bash
+python -m pytest -s tests/test_offline_teacher_data.py
+```
+
+The small test suite ensures the serialization helpers keep handling nested numpy object arrays correctly. The `-s` flag bypasses a Windows console capture quirk.
 
 ### Step 2: Train Student Models
 
@@ -113,6 +176,13 @@ This will:
 - Save results to `./results/`
 
 **Expected runtime**: Several hours to days depending on dataset size and cluster configuration.
+
+**Pre-flight checklist**:
+
+- Offline Parquet validated (see Step 1b) and `config.OFFLINE_DATA_PATH` points to that snapshot.
+- Ray cluster sized for planned concurrency (`RAY_MAX_CONCURRENT_TRIALS` optional throttle).
+- Hugging Face token still valid (re-auth if runs start failing with 401s).
+- Monitor `results/**/error.txt` plus Ray Tune dashboard for early warnings.
 
 ## Configuration
 
@@ -181,10 +251,10 @@ The `DistillationStudent` class (`distillation_student.py`) wraps TinyLlama and 
 
 ### Offline Teacher Data Script
 
-The `offline_teacher_data.py` script:
-- Uses Ray Data for parallel processing
-- Runs teacher model with `@ray.remote(num_gpus=1)`
-- Saves all teacher outputs to disk for efficient offline distillation
+The `offline_teacher_data.py` script now:
+- Streams datasets sequentially on a single GPU (no Ray dependency)
+- Compresses teacher outputs (top‑k logits, downsampled hidden/attention tensors)
+- Writes directly to Parquet on the high-capacity drive so the run can complete on a workstation
 
 ### Training Script
 
@@ -214,6 +284,12 @@ If you encounter GPU memory issues:
 - Ensure you have internet access for HuggingFace datasets
 - Some datasets may require authentication or approval
 - Check dataset names in `config.py` match current HuggingFace names
+
+### Storage & Archival
+
+- Default offline outputs are written to `D:\offline_teacher_data` when that drive exists; otherwise they fall back to `./offline_teacher_data/`.
+- After a successful verification, copy the Parquet file to an archive location with a timestamp (e.g., `offline_teacher_data_2025-11-14.parquet`) to avoid mixing older runs.
+- Keep at least one validated snapshot handy so you can retrain without recomputing teacher passes if disk cleanup removes intermediate files.
 
 ## Citation
 

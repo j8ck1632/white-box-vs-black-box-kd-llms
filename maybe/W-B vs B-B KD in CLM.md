@@ -4,20 +4,20 @@
 
 ## **`Executive Summary`**
 
-This document outlines a research plan to investigate a critical, unaddressed gap in knowledge distillation (KD) for large language models (LLMs). While KD is widely used to compress large "teacher" models into smaller "student" models, the community lacks a clear, empirical benchmark on the *comparative value* of different knowledge sources. This experiment will directly compare "black-box" distillation (using only final-answer logits) against "white-box" methods (using internal hidden states and attention maps). We will use meta-llama/Meta-Llama-3-8B as the teacher and TinyLlama/TinyLlama-1.1B-Chat-v1.0 as the student, connected via custom architectural adapters. The experiment will leverage a 28-GPU Ray cluster to run 28 concurrent trials (4 experimental groups x 7 random seeds), ensuring statistical robustness. The expected outcome is a foundational benchmark that provides a clear, task-dependent answer to *how* open-source LLMs should be distilled, a highly publishable result for a top-tier NLP/ML conference.
+This document outlines a research plan to investigate a critical, unaddressed gap in knowledge distillation (KD) for large language models (LLMs). While KD is widely used to compress large "teacher" models into smaller "student" models, the community lacks a clear, empirical benchmark on the *comparative value* of different knowledge sources. This experiment will directly compare "black-box" distillation (using only final-answer logits) against "white-box" methods (using internal hidden states and attention maps). We will use mistralai/Mistral-7B-v0.1 as the teacher and TinyLlama/TinyLlama-1.1B-Chat-v1.0 as the student, connected via custom architectural adapters. The experiment will leverage a 28-GPU Ray cluster to run 28 concurrent trials (4 experimental groups x 7 random seeds), ensuring statistical robustness. The expected outcome is a foundational benchmark that provides a clear, task-dependent answer to *how* open-source LLMs should be distilled, a highly publishable result for a top-tier NLP/ML conference.
 
 ## **1\. Introduction & Research Gap**
 
 ### **1.1. The Problem**
 
-Large Language Models (LLMs) like the Llama-3 8B series offer powerful capabilities, but their size and computational cost make them unsuitable for many on-device or low-resource applications. Knowledge Distillation (KD) is the primary technique for "compressing" these models. It involves training a smaller "student" model (e.g., TinyLlama 1.1B) to mimic the behavior of a large, pre-trained "teacher" model.
+Large Language Models (LLMs) like the Mistral-7B series offer powerful capabilities, but their size and computational cost make them unsuitable for many on-device or low-resource applications. Knowledge Distillation (KD) is the primary technique for "compressing" these models. It involves training a smaller "student" model (e.g., TinyLlama 1.1B) to mimic the behavior of a large, pre-trained "teacher" model.
 
 ### **1.2. The Known Methods**
 
 Distillation techniques fall into two broad categories:
 
 1. **Black-Box Distillation:** The student only has access to the teacher's final outputs (the logits, or "answer probabilities"). This is the only method possible when distilling from closed-source APIs (like GPT-4).  
-2. **White-Box Distillation:** With open-source models (like Llama 3), the student can access the teacher's internal "thoughts," including its intermediate **hidden states** and **attention maps**.
+2. **White-Box Distillation:** With open-source models (like Mistral-7B), the student can access the teacher's internal "thoughts," including its intermediate **hidden states** and **attention maps**.
 
 ### **1.3. The Critical Research Gap**
 
@@ -68,7 +68,7 @@ A diverse set of tasks is crucial to test our hypothesis:
 
 ### **3.1. Models**
 
-* **Teacher (Frozen):** meta-llama/Meta-Llama-3-8B  
+* **Teacher (Frozen):** mistralai/Mistral-7B-v0.1  
   * **Hidden Dimension (d\_teacher):** 4096  
   * **Attention Heads:** 32  
 * **Student (Trainable):** TinyLlama/TinyLlama-1.1B-Chat-v1.0  
@@ -116,7 +116,7 @@ This plan is designed for high-throughput, offline distillation to maximize clus
 * We will **not** run the 8B teacher model live during student training. This is "online" distillation and is extremely slow.  
 * We will run the teacher *once* and save its knowledge.  
 * **Action:** Write a script that uses ray.data to load the prepared datasets.  
-* **Parallelism:** Use ray.data.map\_batches() to apply a @ray.remote(num\_gpus=1) function to the data. This function will run the Llama-3 8B teacher on a batch of prompts.  
+* **Parallelism:** Use ray.data.map\_batches() to apply a @ray.remote(num\_gpus=1) function to the data. This function will run the Mistral-7B teacher on a batch of prompts.  
 * **Extraction:** This function will extract and save all necessary data:  
   1. teacher\_logits  
   2. teacher\_hidden\_state  
@@ -187,6 +187,6 @@ This experiment is highly publishable, not because it invents a single new algor
 * **Expected Outcome:** A set of tables and plots clearly showing which distillation signal (distill\_type) yields the best performance on which task (SST-2, MMLU, GSM8K).  
 * **Why It's Publishable:**  
   1. **Resolves Fragmentation:** It provides a direct, "apples-to-apples" comparison of fragmented white-box methods.  
-  2. **Modern Architecture:** It uses modern, relevant, and popular models (Llama 3 / TinyLlama) that the community is actively using.  
+  2. **Modern Architecture:** It uses modern, relevant, and popular models (Mistral-7B / TinyLlama) that the community is actively using.  
   3. **Task-Specific Insights:** The key finding will likely be that "reasoning" (MMLU, GSM8K) *requires* white-box signals, while "NLU" (SST-2) does not. This is a novel and actionable insight.  
   4. **Statistical Robustness:** By using 7 seeds per experiment (28 trials total), your results will be statistically sound and highly credible, a feature many academic papers lack due to compute constraints.

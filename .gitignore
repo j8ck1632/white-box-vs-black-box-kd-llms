@@ -26,6 +26,9 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.worker-venv/
+.wbvb-env/
+*.wbvb-env/
 
 # IDEs
 .vscode/
@@ -51,6 +54,7 @@ results/
 *.parquet
 *.csv
 *.pkl
+Whitebox vs Blackbox/offline_teacher_data.zip
 
 # Jupyter
 .ipynb_checkpoints/

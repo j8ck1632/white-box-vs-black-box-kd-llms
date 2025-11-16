@@ -1,0 +1,24 @@
+# Quick Command Cheatsheet
+
+1. **Build the shareable zip (contains scripts + docs + teacher_manifest.json)**
+```
+python create_shareable_package.py --output shareable_experiment.zip
+```
+
+2. **(On collaborator machine) Read plan + launch GUI**
+```
+python shareable_bundle/experiment_hub.py plan
+python shareable_bundle/experiment_hub.py dashboard
+```
+
+3. **Run assigned experiment (example: black-box seeds 0-2)**
+```
+python shareable_bundle/experiment_hub.py run --distill-type black_box --seeds 0 1 2
+```
+
+4. **Need teacher metadata again? (copy included JSON)**
+```
+copy teacher_manifest.json shared/teacher_manifest.json
+```
+
+

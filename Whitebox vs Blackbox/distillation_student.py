@@ -20,25 +20,43 @@ class DistillationStudent(nn.Module):
       (2048 -> 4096)
     """
     
-    def __init__(self, model_name: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"):
+    def __init__(self, model_name: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0", device=None):
         """
         Initialize the DistillationStudent model.
         
         Args:
             model_name: HuggingFace model identifier for the student model
+            device: Optional device to load model on. If None, uses "cuda" if available, else "cpu"
         """
         super().__init__()
         
-        # Load the base TinyLlama model
-        self.student_model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16,
-            device_map="auto"
-        )
+        # Determine device
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        bf16_supported = False
+        if device == "cuda" and torch.cuda.is_available():
+            capability = torch.cuda.get_device_capability()
+            bf16_supported = capability[0] >= 8  # Ampere or newer
+
+        if device == "cuda" and torch.cuda.is_available():
+            preferred_dtype = torch.bfloat16 if bf16_supported else torch.float16
+            self.student_model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=preferred_dtype,
+                device_map="auto",
+            )
+        else:
+            self.student_model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float16 if device != "cpu" else torch.float32,
+            )
+            self.student_model = self.student_model.to(device)
         
         # Get the hidden dimension from the model config
         self.d_student = self.student_model.config.hidden_size  # Should be 2048
-        self.d_teacher = 4096  # Teacher (Llama-3-8B) hidden dimension
+        self.d_teacher = 4096  # Teacher (Mistral-7B) hidden dimension
+        self._eager_attention_enabled = False
         
         # Trainable adapter layer to project student hidden states to teacher dimension
         # This is crucial for aligning hidden states between student and teacher
@@ -76,12 +94,22 @@ class DistillationStudent(nn.Module):
             - projected_hidden_state: Projected hidden states [batch_size, seq_len, d_teacher] (if requested)
             - attention_map: Final layer attention maps [batch_size, num_heads, seq_len, seq_len] (if requested)
         """
+        need_attention = return_attention or output_attentions
+        if need_attention and not self._eager_attention_enabled:
+            set_attn_impl = getattr(self.student_model, "set_attn_implementation", None)
+            if callable(set_attn_impl):
+                try:
+                    set_attn_impl("eager")
+                    self._eager_attention_enabled = True
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    print(f"WARNING: Failed to set eager attention: {exc}")
+
         # Forward pass through the base model
         outputs = self.student_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             output_hidden_states=True,
-            output_attentions=output_attentions or return_attention
+            output_attentions=need_attention
         )
         
         # Extract logits (always returned)
@@ -93,6 +121,9 @@ class DistillationStudent(nn.Module):
         if return_hidden_states:
             # Get the final layer hidden states (last element of hidden_states tuple)
             hidden_states = outputs.hidden_states[-1]  # [batch_size, seq_len, d_student]
+            projector_dtype = self.hidden_state_projector.weight.dtype
+            if hidden_states.dtype != projector_dtype:
+                hidden_states = hidden_states.to(projector_dtype)
             
             # Project to teacher dimension
             projected_hidden_state = self.hidden_state_projector(hidden_states)

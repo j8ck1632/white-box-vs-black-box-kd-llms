@@ -22,9 +22,9 @@ GAMMA_2 = 0.1  # Weight for attention alignment loss (L_align_attn)
 
 # Training hyperparameters
 LEARNING_RATE = 1e-4
-BATCH_SIZE = 8
+BATCH_SIZE = 2
 NUM_EPOCHS = 3
-MAX_SEQ_LENGTH = 512
+MAX_SEQ_LENGTH = 256
 
 # Teacher model dimensions
 TEACHER_HIDDEN_DIM = 4096
@@ -37,6 +37,15 @@ STUDENT_NUM_HEADS = 32
 # Paths
 OFFLINE_DATA_PATH = "./offline_teacher_data"
 OUTPUT_PATH = "./results"
+SYSTEM_TEMP_DIR = None  # e.g., "D:/temp" to offload intermediate files
+
+# Offline data compression knobs
+TOP_K_LOGITS = 128
+HIDDEN_STRIDE = 2
+ATTENTION_STRIDE = 2
+PARQUET_COMPRESSION = "zstd"
+PARQUET_COMPRESSION_LEVEL = 3
+TEACHER_VOCAB_SIZE = 32000
 
 # Ray configuration
 RAY_NUM_GPUS_PER_TRIAL = 1
@@ -45,8 +54,15 @@ RAY_NUM_CPUS_PER_TRIAL = 4
 # Set to a specific number to limit concurrency (e.g., 2 for a 2-GPU cluster)
 RAY_MAX_CONCURRENT_TRIALS = None
 
+# Ray cluster configuration (for offline_teacher_data.py)
+# To use a Ray cluster, set this to the head node address (e.g., "192.168.1.100:10001")
+# Or set the RAY_ADDRESS environment variable instead
+# Leave as None to use local Ray (single machine)
+RAY_CLUSTER_ADDRESS = None  # Example: "192.168.1.100:10001" or "ray://head-node:10001"
+
 # Hugging Face token (required for gated models)
 # Get your token from: https://huggingface.co/settings/tokens
 # Replace 'YOUR_TOKEN_HERE' with your actual Hugging Face token
 HUGGING_FACE_TOKEN = "YOUR_TOKEN_HERE"
+
 
