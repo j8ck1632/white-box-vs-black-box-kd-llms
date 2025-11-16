@@ -64,9 +64,6 @@ Whitebox vs Blackbox/offline_teacher_data.zip
 .env
 .env.local
 
-# Configuration (contains sensitive tokens)
-config.py
-
 # HuggingFace cache (optional - uncomment if you want to ignore)
 # .cache/huggingface/
 

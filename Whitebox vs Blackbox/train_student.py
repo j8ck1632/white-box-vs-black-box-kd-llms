@@ -238,11 +238,7 @@ def run_trial(
     student_model.train()
     param_dtype = next(student_model.parameters()).dtype
 
-    optimizer = torch.optim.AdamW(
-        student_model.parameters(),
-        lr=learning_rate,
-        weight_decay=0.01,
-    )
+    optimizer: Optional[torch.optim.Optimizer] = None
     use_deepspeed = use_deepspeed and torch.cuda.is_available()
     if use_deepspeed:
         try:
@@ -273,6 +269,11 @@ def run_trial(
         amp_enabled = False
         scaler = None
     else:
+        optimizer = torch.optim.AdamW(
+            student_model.parameters(),
+            lr=learning_rate,
+            weight_decay=0.01,
+        )
         training_model = student_model
         eval_model = student_model
         amp_enabled = (
