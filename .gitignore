@@ -55,6 +55,7 @@ results/
 *.csv
 *.pkl
 Whitebox vs Blackbox/offline_teacher_data.zip
+Whitebox vs Blackbox/HANDOFF.md
 
 # Jupyter
 .ipynb_checkpoints/
