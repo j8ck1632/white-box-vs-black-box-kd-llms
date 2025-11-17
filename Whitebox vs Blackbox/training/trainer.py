@@ -6,6 +6,7 @@ from typing import Dict, List
 
 import torch
 from torch.amp import GradScaler, autocast
+from tqdm.auto import tqdm
 
 import config
 from distillation_core import compute_loss
@@ -81,7 +82,14 @@ def run_trial(
         start_time = time.time()
         total_batches = len(train_loader)
         optimizer.zero_grad(set_to_none=True)
-        for step, batch in enumerate(train_loader, start=1):
+        progress = tqdm(
+            train_loader,
+            total=total_batches,
+            desc=f"{distill_type} | epoch {epoch + 1}/{num_epochs}",
+            leave=False,
+            dynamic_ncols=True,
+        )
+        for step, batch in enumerate(progress, start=1):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
@@ -117,8 +125,10 @@ def run_trial(
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
 
-            epoch_loss += total_loss.item()
+            step_loss = total_loss.item()
+            epoch_loss += step_loss
             batches += 1
+            progress.set_postfix({"loss": f"{step_loss:.4f}"}, refresh=False)
 
         avg_train_loss = epoch_loss / batches if batches else 0.0
         val_loss, val_accuracy, task_breakdown = evaluate_model(
