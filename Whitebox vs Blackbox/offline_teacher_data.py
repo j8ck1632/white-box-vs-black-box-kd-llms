@@ -34,6 +34,10 @@ TOP_K_LOGITS = getattr(config, "TOP_K_LOGITS", 128)
 HIDDEN_STRIDE = max(1, getattr(config, "HIDDEN_STRIDE", 1))
 ATTENTION_STRIDE = max(1, getattr(config, "ATTENTION_STRIDE", 1))
 
+TASK_NAME_SST2 = "sst2"
+TASK_NAME_MMLU = "mmlu"
+TASK_NAME_GSM8K = "gsm8k"
+
 
 def configure_temp_directories():
     """Pin temporary directories to the high-capacity drive when available."""
@@ -245,6 +249,7 @@ def process_batch_with_teacher(batch: Dict[str, List[Any]], model_name: str, stu
         Dictionary containing enriched batch data with:
         - prompt: Original prompts
         - answer: Original answers
+        - task_name: Source benchmark identifier for each example
         - teacher_topk_indices / teacher_topk_values: Compressed logits
         - teacher_hidden_state: Teacher final layer hidden states (float16)
         - teacher_attention_map: Teacher final layer attention maps (float16)
@@ -260,11 +265,15 @@ def process_batch_with_teacher(batch: Dict[str, List[Any]], model_name: str, stu
     # Extract and validate prompts and answers
     prompts = batch.get("prompt", [])
     answers = batch.get("answer", [])
+    raw_task_names = batch.get("task_name")
+    if raw_task_names is None:
+        raw_task_names = ["unknown"] * len(prompts)
     
     # Ensure all prompts are strings and filter out any invalid entries
     valid_prompts = []
     valid_answers = []
-    for prompt, answer in zip(prompts, answers):
+    valid_task_names = []
+    for prompt, answer, task_name in zip(prompts, answers, raw_task_names):
         # Convert prompt to string if it's not already
         if prompt is None:
             continue
@@ -276,14 +285,22 @@ def process_batch_with_teacher(batch: Dict[str, List[Any]], model_name: str, stu
         if not prompt_str or len(prompt_str.strip()) == 0:
             continue
             
+        normalized_task = "unknown"
+        if isinstance(task_name, str):
+            normalized_task = task_name.strip() or "unknown"
+        elif task_name is not None:
+            normalized_task = str(task_name).strip() or "unknown"
+
         valid_prompts.append(prompt_str)
         valid_answers.append(answer_str)
+        valid_task_names.append(normalized_task)
     
     # Skip if no valid prompts
     if not valid_prompts:
         return {
             "prompt": [],
             "answer": [],
+            "task_name": [],
             "teacher_topk_indices": [],
             "teacher_topk_values": [],
             "teacher_hidden_state": [],
@@ -371,6 +388,7 @@ def process_batch_with_teacher(batch: Dict[str, List[Any]], model_name: str, stu
     result = {
         "prompt": valid_prompts,
         "answer": valid_answers,
+        "task_name": valid_task_names,
     }
     
     # Process each example individually to filter padding
@@ -452,7 +470,7 @@ def load_and_preprocess_datasets() -> List[Dict[str, str]]:
         answer = "positive" if example.get("label") == 1 else "negative"
         # Only add if we have valid data
         if prompt:
-            all_data.append({"prompt": prompt, "answer": answer})
+            all_data.append({"prompt": prompt, "answer": answer, "task_name": TASK_NAME_SST2})
     
     # Load MMLU (subset - using a few-shot format)
     print("Loading MMLU dataset...")
@@ -475,7 +493,7 @@ def load_and_preprocess_datasets() -> List[Dict[str, str]]:
             answer = str(example.get("answer", ""))
             # Only add if we have valid data
             if question and answer:
-                all_data.append({"prompt": prompt, "answer": answer})
+                all_data.append({"prompt": prompt, "answer": answer, "task_name": TASK_NAME_MMLU})
     except Exception as e:
         print(f"Warning: Could not load MMLU dataset: {e}")
     
@@ -490,7 +508,7 @@ def load_and_preprocess_datasets() -> List[Dict[str, str]]:
             answer = str(example.get("answer", "")) if example.get("answer") is not None else ""
             # Only add if we have valid data
             if prompt and answer:
-                all_data.append({"prompt": prompt, "answer": answer})
+                all_data.append({"prompt": prompt, "answer": answer, "task_name": TASK_NAME_GSM8K})
     except Exception as e:
         print(f"Warning: Could not load GSM8K dataset: {e}")
     
@@ -540,6 +558,7 @@ def verify_saved_data(data_path: str, num_samples: int = 10):
     required_columns = [
         "prompt",
         "answer",
+        "task_name",
         "teacher_topk_indices",
         "teacher_topk_values",
         "teacher_hidden_state",
@@ -592,6 +611,8 @@ def verify_saved_data(data_path: str, num_samples: int = 10):
             validation_errors.append(f"Example {idx}: prompt should be string, got {type(row['prompt'])}")
         if not isinstance(row["answer"], str):
             validation_errors.append(f"Example {idx}: answer should be string, got {type(row['answer'])}")
+        if "task_name" not in row or not isinstance(row["task_name"], str):
+            validation_errors.append(f"Example {idx}: task_name should be string, got {type(row.get('task_name'))}")
     
     if validation_errors:
         print("VALIDATION ERRORS FOUND:")
@@ -608,11 +629,13 @@ def _flatten_result_rows(result_dict: Dict[str, List[Any]]) -> List[Dict[str, An
     """Convert batched result dict into a list of row dictionaries."""
     rows = []
     num_items = len(result_dict.get("prompt", []))
+    task_names = result_dict.get("task_name", [])
     for i in range(num_items):
         rows.append(
             {
                 "prompt": result_dict["prompt"][i],
                 "answer": result_dict["answer"][i],
+                "task_name": task_names[i] if i < len(task_names) else "unknown",
                 "teacher_topk_indices": result_dict["teacher_topk_indices"][i],
                 "teacher_topk_values": result_dict["teacher_topk_values"][i],
                 "teacher_hidden_state": result_dict["teacher_hidden_state"][i],
@@ -631,6 +654,7 @@ def _batch_iterator(data: List[Dict[str, str]], batch_size: int):
         yield {
             "prompt": [item["prompt"] for item in batch_data],
             "answer": [item["answer"] for item in batch_data],
+            "task_name": [item.get("task_name", "unknown") for item in batch_data],
         }
 
 
