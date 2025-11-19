@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-from datasets import load_dataset
+import pyarrow.parquet as pq
+import pyarrow as pa
 
 import config
 
@@ -29,8 +30,7 @@ def _ensure_stride(max_length: int, stride: int) -> int:
 class OfflineDistillationDataset(Dataset):
     """
     Dataset for loading pre-computed teacher outputs.
-    Now loads pre-tokenized (Prompt + Answer) sequences.
-    Uses Hugging Face datasets for memory-mapped loading to avoid RAM spikes.
+    Uses PyArrow for direct random access to Parquet files to avoid memory spikes.
     """
 
     def __init__(self, parquet_path: Union[str, List[str]], tokenizer, max_length: int = 512):
@@ -43,15 +43,58 @@ class OfflineDistillationDataset(Dataset):
         self.max_hidden_seq_len = _ensure_stride(self.max_length, self.hidden_stride)
         self.max_attention_seq_len = _ensure_stride(self.max_length, self.attention_stride)
 
-        # Load with memory mapping (streaming from disk)
-        # split="train" is standard for load_dataset with data_files
-        if isinstance(parquet_path, list):
-            print(f"Initializing memory-mapped dataset from {len(parquet_path)} files...")
+        if isinstance(parquet_path, str):
+            self.parquet_paths = [parquet_path]
         else:
-            print(f"Initializing memory-mapped dataset from {parquet_path}...")
+            self.parquet_paths = parquet_path
+
+        # 1. Index the dataset (Map global_idx -> (file_idx, row_group_idx, row_in_group))
+        print(f"Indexing {len(self.parquet_paths)} Parquet files...")
+        self.index_map: List[Tuple[int, int, int]] = []
+        
+        # We also need schema info to know which columns to load
+        self.column_names = set()
+        
+        for file_idx, path in enumerate(self.parquet_paths):
+            pf = pq.ParquetFile(path)
+            if file_idx == 0:
+                self.column_names = set(pf.schema.names)
             
-        self.dataset = load_dataset("parquet", data_files=parquet_path, split="train")
-        self.column_names = set(self.dataset.column_names)
+            for rg_idx in range(pf.num_row_groups):
+                rg_meta = pf.metadata.row_group(rg_idx)
+                num_rows = rg_meta.num_rows
+                for r in range(num_rows):
+                    self.index_map.append((file_idx, rg_idx, r))
+        
+        print(f"Indexed {len(self.index_map)} examples.")
+
+        # Lazy file handles (per process)
+        self.file_handles = {}
+
+    def _get_row(self, idx):
+        file_idx, rg_idx, row_in_rg = self.index_map[idx]
+        path = self.parquet_paths[file_idx]
+        
+        # Manage file handles per-process (safe for DataLoader workers)
+        pid = os.getpid()
+        key = (pid, file_idx)
+        
+        if key not in self.file_handles:
+            self.file_handles[key] = pq.ParquetFile(path)
+        
+        pf = self.file_handles[key]
+        
+        # Read the specific Row Group
+        # This loads the whole row group into memory, but it's small (batch_size ~ 4-8)
+        table = pf.read_row_group(rg_idx)
+        
+        # Convert just the specific row to dictionary
+        # slice(offset, length)
+        row_table = table.slice(row_in_rg, length=1)
+        row = row_table.to_pydict()
+        
+        # Unwrap lists (to_pydict returns lists of values, so [value])
+        return {k: v[0] for k, v in row.items()}
 
     @staticmethod
     def _to_py(value):
@@ -69,15 +112,14 @@ class OfflineDistillationDataset(Dataset):
         try:
             return np.array(data, dtype=dtype)
         except (ValueError, TypeError):
-            # Handle ragged arrays if necessary, though usually data should be uniform
+            # Handle ragged arrays if necessary
             return np.stack([np.array(elem, dtype=dtype) for elem in data])
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.index_map)
 
     def __getitem__(self, idx):
-        # Load row on demand
-        row = self.dataset[idx]
+        row = self._get_row(idx)
 
         # 1. Get Inputs
         input_ids_list = row["input_ids"]
@@ -113,7 +155,6 @@ class OfflineDistillationDataset(Dataset):
 
         # 3. Reconstruct Teacher Logits
         if "teacher_topk_indices" in self.column_names and "teacher_topk_values" in self.column_names:
-            # Check if data exists in this row (it should)
             if row.get("teacher_topk_indices") is not None:
                 item["teacher_logits"] = self._reconstruct_logits(row["teacher_topk_indices"], row["teacher_topk_values"])
         elif "teacher_logits" in self.column_names:
