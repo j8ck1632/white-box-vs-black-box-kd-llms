@@ -58,16 +58,8 @@ class DistillationStudent(nn.Module):
         self.d_teacher = 4096  # Teacher (Mistral-7B) hidden dimension
         self._eager_attention_enabled = False
         
-        # Trainable adapter layer to project student hidden states to teacher dimension
-        # This is crucial for aligning hidden states between student and teacher
-        self.hidden_state_projector = nn.Linear(
-            in_features=self.d_student,
-            out_features=self.d_teacher
-        )
-        
-        # Initialize the projector with small random weights
-        nn.init.xavier_uniform_(self.hidden_state_projector.weight)
-        nn.init.zeros_(self.hidden_state_projector.bias)
+        # Removing the linear projector as requested.
+        # We will align hidden states using dimension-agnostic metrics (like CKA) or padding/truncation.
         
     def forward(
         self,
@@ -121,15 +113,12 @@ class DistillationStudent(nn.Module):
         if return_hidden_states:
             # Get the final layer hidden states (last element of hidden_states tuple)
             hidden_states = outputs.hidden_states[-1]  # [batch_size, seq_len, d_student]
-            projector_dtype = self.hidden_state_projector.weight.dtype
-            if hidden_states.dtype != projector_dtype:
-                hidden_states = hidden_states.to(projector_dtype)
             
-            # Project to teacher dimension
-            projected_hidden_state = self.hidden_state_projector(hidden_states)
-            
+            # No projection - returning raw hidden states
             result["hidden_state"] = hidden_states
-            result["projected_hidden_state"] = projected_hidden_state
+            # result["projected_hidden_state"] is no longer available
+            # We set it to hidden_states so the trainer doesn't crash, but the loss function must handle the dimension mismatch.
+            result["projected_hidden_state"] = hidden_states
         
         # Extract attention maps if requested
         if return_attention and outputs.attentions is not None:

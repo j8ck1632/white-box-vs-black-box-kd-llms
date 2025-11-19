@@ -229,6 +229,52 @@ class OfflineDistillationDataset(Dataset):
         return output
 
 
+
+def linear_cka_loss(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """
+    Computes Linear CKA (Centered Kernel Alignment) loss between two representations.
+    Loss = 1 - CKA(x, y)
+    
+    Args:
+        x: [Batch, Seq, Dim1]
+        y: [Batch, Seq, Dim2]
+        
+    Both x and y are flattened to [Batch*Seq, Dim] for computation.
+    """
+    # Flatten batch and sequence dimensions
+    b, s, d1 = x.shape
+    b2, s2, d2 = y.shape
+    
+    # Ensure shapes match on batch/seq (they should if striding is handled)
+    min_b = min(b, b2)
+    min_s = min(s, s2)
+    
+    x = x[:min_b, :min_s, :].contiguous().view(-1, d1)
+    y = y[:min_b, :min_s, :].contiguous().view(-1, d2)
+    
+    # Center columns (features)
+    x = x - x.mean(dim=0, keepdim=True)
+    y = y - y.mean(dim=0, keepdim=True)
+    
+    # Compute Gram matrices efficiently
+    # We don't strictly need the full Gram matrix (N^2) if we use the trick:
+    # HSIC(X, Y) = ||Y^T X||_F^2 / (N-1)^2  (for centered X, Y)
+    # CKA = ||Y^T X||_F^2 / ( ||X^T X||_F * ||Y^T Y||_F )
+    
+    # Transpose is (Dim, N)
+    xt_x = torch.mm(x.t(), x)  # (D1, D1)
+    yt_y = torch.mm(y.t(), y)  # (D2, D2)
+    yt_x = torch.mm(y.t(), x)  # (D2, D1)
+    
+    # Frobenius norms squared
+    nom = torch.norm(yt_x, p='fro') ** 2
+    denom_x = torch.norm(xt_x, p='fro')
+    denom_y = torch.norm(yt_y, p='fro')
+    
+    cka = nom / (denom_x * denom_y + 1e-8)
+    return 1.0 - cka
+
+
 def compute_loss(
     student_outputs: Dict[str, torch.Tensor],
     labels: torch.Tensor,
@@ -255,17 +301,6 @@ def compute_loss(
         teacher_logits = teacher_data["teacher_logits"].float()
         temperature = 2.0 # Standard temp
         
-        # We should only compute KD loss on non-padding tokens? 
-        # Or even better, on the Answer tokens only? 
-        # Usually KD is applied to the whole sequence or just the target. 
-        # Let's apply to non-padding tokens.
-        
-        # Create mask from labels (where labels != -100 implies valid answer token)
-        # OR use attention_mask (valid sequence).
-        # Let's align on valid sequence (Prompt + Answer).
-        # Note: teacher_logits are reconstructed sparse logits. -100.0 filler.
-        # Softmax handles -100.0 as near zero.
-        
         student_logits_soft = F.log_softmax(student_logits_float / temperature, dim=-1)
         teacher_logits_soft = F.softmax(teacher_logits / temperature, dim=-1)
         
@@ -289,13 +324,21 @@ def compute_loss(
         if stride > 1:
             student_hidden = student_hidden[:, ::stride, :]
             
-        # Truncate to matching length (should match due to padding, but safety first)
-        seq_len = min(student_hidden.size(1), teacher_hidden.size(1))
+        # Check dimensions
+        s_dim = student_hidden.size(-1)
+        t_dim = teacher_hidden.size(-1)
         
-        align_hidden_loss = F.mse_loss(
-            student_hidden[:, :seq_len, :],
-            teacher_hidden[:, :seq_len, :],
-        )
+        seq_len = min(student_hidden.size(1), teacher_hidden.size(1))
+        student_hidden = student_hidden[:, :seq_len, :]
+        teacher_hidden = teacher_hidden[:, :seq_len, :]
+        
+        if s_dim != t_dim:
+            # Dimensions differ (Projector removed), use CKA Loss
+            align_hidden_loss = linear_cka_loss(student_hidden, teacher_hidden)
+        else:
+            # Dimensions match (Projector present or same size), use MSE
+            align_hidden_loss = F.mse_loss(student_hidden, teacher_hidden)
+            
         losses["align_hidden_loss"] = align_hidden_loss.to(student_logits.device, dtype=logits_dtype)
     else:
         losses["align_hidden_loss"] = torch.tensor(0.0, device=student_logits.device)
