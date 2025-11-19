@@ -22,17 +22,17 @@ BETA = 0.5   # Weight for KD loss (L_KD)
 GAMMA_1 = 0.1  # Weight for hidden state alignment loss (L_align_hidden)
 GAMMA_2 = 0.1  # Weight for attention alignment loss (L_align_attn)
 
-# Training hyperparameters (large Colab Pro+ defaults)
+# Training hyperparameters (optimized for A100 80GB)
 LEARNING_RATE = 1e-4
-BATCH_SIZE = 80
-WHITEBOX_BATCH_SIZE = 20
+BATCH_SIZE = 16                 # Reduced from 80 to 16 to prevent GPU OOM
+WHITEBOX_BATCH_SIZE = 8         # Reduced from 20 to 8
 NUM_EPOCHS = 3
-GRADIENT_ACCUMULATION_STEPS = 1
+GRADIENT_ACCUMULATION_STEPS = 4 # Increased to maintain effective batch size
 MAX_SEQ_LENGTH = 512
 VALIDATION_SPLIT = 0.1
 MAX_CPU_THREADS = 4
 USE_AUTOMATIC_MIXED_PRECISION = True
-DATALOADER_NUM_WORKERS = 6  # Increase on beefier hosts to keep the GPU fed
+DATALOADER_NUM_WORKERS = 4      # Reduced from 6 to save CPU RAM overhead
 
 # Teacher model dimensions
 TEACHER_HIDDEN_DIM = 4096
